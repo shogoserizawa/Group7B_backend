@@ -94,19 +94,13 @@ class SocketFree {
         }
     }
 
+    //各クライアントからのデータを全クライアントに送信するメソッド
     public static void sendAll(int number , byte[] sendHead , String line){
         try {
-            String modifiedLine = (number + 1) + "<%>" + line; // 送信者情報を追加
-            byte[] modifiedLineBytes = modifiedLine.getBytes("UTF-8"); // バイト配列に変換
-    
-            for (int i = 0; i < member; i++) {
-                byte[] modifiedSendHead = new byte[2];
-                modifiedSendHead[0] = sendHead[0];
-                modifiedSendHead[1] = (byte) modifiedLineBytes.length; // 文字列の長さをヘッダーに設定
-                
-                os[i].write(modifiedSendHead); // ヘッダー出力
-                os[i].write(modifiedLineBytes); // 変更されたメッセージを出力
-                System.out.println((i+1) + "番目に" + (number+1) + "番目のメッセージを送りました！" );
+            for (int i = 0; i <member ; i++) {
+                os[i].write(sendHead);//ヘッダー出力
+                os[i].write(line.getBytes("UTF-8"));//3バイト目以降に文字列をバイナリデータに変換して出力
+                System.out.println((i+1)+"番目に"+(number+1)+"番目のメッセージを送りました！" );
             }
         } catch (IOException e) {
             System.err.println("エラーが発生しました: " + e);
@@ -144,23 +138,23 @@ class ClientThread extends Thread{
 
     //ソケットへの入力を無限ループで監視する　※125文字まで(126文字以上はヘッダーのフレームが変化する)
     public void echo(InputStream is , OutputStream os , int myNumber) {
-        try {
+        try{
             while(true) {
-                byte[] buff = new byte[1024]; // クライアントから送られたバイナリデータを入れる配列
-                int lineData = is.read(buff); // データを読み込む
+                byte[] buff = new byte[1024];//クライアントから送られたバイナリデータを入れる配列
+                int lineData =is.read(buff);//データを読み込む
                 for (int i = 0; i < lineData - 6; i++) {
-                    buff[i + 6] = (byte) (buff[i % 4 + 2] ^ buff[i + 6]); // 7バイト目以降を3-6バイト目のキーを用いてデコード
+                    buff[i + 6] = (byte) (buff[i % 4 + 2] ^ buff[i + 6]);//7バイト目以降を3-6バイト目のキーを用いてデコード
                 }
-                String line = new String(buff, 6, lineData - 6, "UTF-8"); // デコードしたデータを文字列に変換
-                byte[] sendHead = new byte[2]; // 送り返すヘッダーを用意
-                sendHead[0] = buff[0]; // 1バイト目は同じもの
-                sendHead[1] = (byte) line.getBytes("UTF-8").length; // 2バイト目は文字列の長さ
-    
-                SocketFree.sendAll(myNumber, sendHead, line); // 各クライアントへの送信は元クラスのsendAllメソッドで実行
-    
-                if (line.equals("bye")) break; // 「bye」が送られたなら受信終了
+                String line = new String(buff, 6, lineData - 6, "UTF-8");//デコードしたデータを文字列に変換
+                byte[] sendHead = new byte[2];//送り返すヘッダーを用意
+                sendHead[0] = buff[0];//1バイト目は同じもの
+                sendHead[1] = (byte) line.getBytes("UTF-8").length;//2バイト目は文字列の長さ
+
+                SocketFree.sendAll(myNumber , sendHead , line);//各クライアントへの送信は元クラスのsedAllメソッドで実行
+
+                if (line.equals("bye")) break;//「bye」が送られたなら受信終了
             }
-        } catch (Exception e) {
+        } catch (Exception e)  {
             System.err.println("エラーが発生しました: " + e);
         }
     }
