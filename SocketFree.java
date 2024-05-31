@@ -127,7 +127,7 @@ class SocketFree {
                 } else {
                     os[i].write(header);            // ヘッダー出力
                     os[i].write(modifiedLineBytes); // 変更されたメッセージを出力
-                    System.out.println((i + 1) + "番目に" + (number + 1) + "番目のメッセージを送りました！");
+                    System.out.println((i + 1) + "番目に" + (number + 1) + "番目のメッセージを送りました");
                 }
             }
         } catch (IOException e) {
@@ -223,8 +223,6 @@ class ClientThread extends Thread {
                 }
 
                 String line = new String(payload, StandardCharsets.UTF_8);
-
-                System.out.println(line);
 
                 if (line.length() >= 3)
                     firstThreeChars = line.substring(0, 3); // メッセージの最初の三文字を格納
