@@ -9,6 +9,8 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Base64;
 import java.util.Base64.Encoder;
+import java.util.Arrays;
+import java.nio.charset.StandardCharsets;
 
 class SocketFree {
 
@@ -20,11 +22,12 @@ class SocketFree {
     private static OutputStream[] os;// 出力ストリーム
     private static ClientThread user[];// 各クライアントのインスタンス
     private static int member;// 接続しているメンバーの数
-    private static String name[];
+    private static String name[]; //接続している人の名前
 
     public static void main(String[] args) {
         int n = 0;
         int maxUser = 100;
+
         // 各フィールドの配列を用意
         sck = new Socket[maxUser];
         is = new InputStream[maxUser];
@@ -38,14 +41,14 @@ class SocketFree {
             sSck = new ServerSocket(60000);// サーバーソケットのインスタンスを作成(ポートは60000)
             System.out.println("サーバーに接続したよ！");
             while (true) {
-                sck[n] = sSck.accept();// 接続待ち。来たらソケットに代入。
+                sck[n] = sSck.accept();         // 接続されたらソケットに代入
                 System.out.println((n + 1) + "番目の参加者が接続しました！");
 
                 // 必要な入出力ストリームを作成する
-                is[n] = sck[n].getInputStream();// ソケットからの入力をバイト列として読み取る
-                isr[n] = new InputStreamReader(is[n]);// 読み取ったバイト列を変換して文字列を読み込む
-                in[n] = new BufferedReader(isr[n]);// 文字列をバッファリングして(まとめて)読み込む
-                os[n] = sck[n].getOutputStream();// ソケットにバイト列を書き込む
+                is[n] = sck[n].getInputStream();        // ソケットからの入力をバイト列として読み取る
+                isr[n] = new InputStreamReader(is[n]);  // 読み取ったバイト列を変換して文字列を読み込む
+                in[n] = new BufferedReader(isr[n]);     // 文字列をバッファリングして(まとめて)読み込む
+                os[n] = sck[n].getOutputStream();       // ソケットにバイト列を書き込む
 
                 // クライアントへ接続許可を返す(ハンドシェイク)
                 handShake(in[n], os[n]);
@@ -96,25 +99,35 @@ class SocketFree {
         }
     }
 
-    public static void sendAll(int number, byte[] sendHead, String line) {
+    public static void sendAll(int number, String line) {
         try {
             String modifiedLine = name[number] + "<%>" + line; // 送信者情報を追加
             byte[] modifiedLineBytes = modifiedLine.getBytes("UTF-8"); // バイト配列に変換
+            byte[] header;
+            int payloadLength = modifiedLineBytes.length;
+
+            if (payloadLength <= 125) {
+                header = new byte[2];
+                header[0] = (byte) 0x81;   // FINビットとテキストフレーム
+                header[1] = (byte) payloadLength;
+            } else {
+                header = new byte[4];
+                header[0] = (byte) 0x81;
+                header[1] = (byte) 126; // ペイロード長を示す126
+                header[2] = (byte) (payloadLength >> 8); // ペイロード長の上位バイト
+                header[3] = (byte) (payloadLength & 0xFF); // ペイロード長の下位バイト
+            }
 
             for (int i = 0; i < member; i++) {
                 if (sck[i].isClosed())
                     continue; // ソケットが閉じていたら無視
 
                 if (i == number) {
-                    continue;         //自分が送っていても無視
+                    continue; // 自分が送っていても無視
                 } else {
-                    byte[] modifiedSendHead = new byte[2];
-                    modifiedSendHead[0] = sendHead[0];
-                    modifiedSendHead[1] = (byte) modifiedLineBytes.length; // 文字列の長さをヘッダーに設定
-
-                    os[i].write(modifiedSendHead); // ヘッダー出力
+                    os[i].write(header);            // ヘッダー出力
                     os[i].write(modifiedLineBytes); // 変更されたメッセージを出力
-                    System.out.println((i + 1) + "番目に" + (number + 1) + "番目のメッセージを送りました！");
+                    System.out.println((i + 1) + "番目に" + (number + 1) + "番目のメッセージを送りました");
                 }
             }
         } catch (IOException e) {
@@ -165,7 +178,15 @@ class ClientThread extends Thread {
                 byte[] buff = new byte[1024]; // クライアントから送られたバイナリデータを入れる配列
                 int lineData = is.read(buff); // データを読み込む lineDataは実際に送られてきたバイト数を表す
 
-                if (lineData == 8) { // クライアントが接続を切断した場合
+                // for (int i=0;i<lineData;i++) {
+                // System.out.printf("%02X ", buff[i]);
+                // }
+                // System.out.println();
+
+                byte value = buff[0];
+                int opcode = value & 0x0F;
+
+                if (opcode == 8) { // クライアントが接続を切断した場合 opcode=8だとCloseフレーム
                     System.out.println("受信者 " + (myNumber + 1) + " が切断されました");
                     if (mySck != null && !mySck.isClosed()) {
                         mySck.close();
@@ -173,14 +194,35 @@ class ClientThread extends Thread {
                     break;
                 }
 
-                for (int i = 0; i < lineData - 6; i++) {
-                    buff[i + 6] = (byte) (buff[i % 4 + 2] ^ buff[i + 6]); // 7バイト目以降を3-6バイト目のキーを用いてデコード
-                }
-                String line = new String(buff, 6, lineData - 6, "UTF-8"); // デコードしたデータを文字列に変換
+                int payloadLength = buff[1] & 0x7F; // ペイロード長を取得し、マスクビットを無視
+                int index = 2; // ペイロード長フィールドの次のバイトから開始
+                byte[] maskingKey = new byte[4];
 
-                byte[] sendHead = new byte[2]; // 送り返すヘッダーを用意
-                sendHead[0] = buff[0]; // 1バイト目は同じもの
-                sendHead[1] = (byte) line.getBytes("UTF-8").length; // 2バイト目は文字列の長さ
+                if (payloadLength == 126) {
+                    // 拡張ペイロード長は2バイト
+                    payloadLength = ((buff[index] & 0xFF) << 8) | (buff[index + 1] & 0xFF);
+                    index += 2;
+                }
+                if (payloadLength == 127) {
+                    // 拡張ペイロード長は8バイト
+                    System.out.println("65535バイトより大きいデータは扱えません");
+                    return;
+                }
+
+                // マスキングキーを取得
+                System.arraycopy(buff, index, maskingKey, 0, 4);
+                index += 4;
+
+                // ペイロードデータを取得
+                byte[] payload = new byte[payloadLength];
+                System.arraycopy(buff, index, payload, 0, payloadLength);
+
+                // ペイロードデータをマスク解除
+                for (int i = 0; i < payload.length; i++) {
+                    payload[i] ^= maskingKey[i % 4];
+                }
+
+                String line = new String(payload, StandardCharsets.UTF_8);
 
                 if (line.length() >= 3)
                     firstThreeChars = line.substring(0, 3); // メッセージの最初の三文字を格納
@@ -189,7 +231,8 @@ class ClientThread extends Thread {
                     remainingString = line.substring(3);
                     SocketFree.AddUsername(myNumber, remainingString);
                 } else
-                    SocketFree.sendAll(myNumber, sendHead, line); // 各クライアントへの送信は元クラスのsendAllメソッドで実行
+                    // 各クライアントへの送信は元クラスのsendAllメソッドで実行
+                    SocketFree.sendAll(myNumber, line);
 
                 if (line.equals("bye"))
                     break; // 「bye」が送られたなら受信終了
